@@ -1,5 +1,7 @@
 /** 通过 CDP 读取 gpu3.html 的运行结果（绕过 headless 的虚拟时间不等待 GPU 异步） */
+import { writeFileSync } from 'node:fs';
 const port = process.argv[2] ? Number(process.argv[2]) : 9333;
+const shotPath = process.argv[3] || '';
 const url = `http://127.0.0.1:${port}/json/list`;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -39,6 +41,10 @@ async function main() {
     const txt = r?.result?.value ?? '';
     if (txt && txt !== '运行中…' && txt !== 'pending' && txt !== 'start') {
       console.log(txt);
+      if (shotPath) {
+        const cap = await send('Page.captureScreenshot', { format: 'png' });
+        if (cap?.data) { writeFileSync(shotPath, Buffer.from(cap.data, 'base64')); console.log('截图:', shotPath); }
+      }
       ws.close();
       return;
     }
