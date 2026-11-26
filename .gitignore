@@ -10,3 +10,4 @@ node_modules/
 # 系统垃圾
 .DS_Store
 Thumbs.db
+API文档.md
