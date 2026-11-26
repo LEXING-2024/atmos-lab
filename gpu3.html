@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>WebGPU 平流核 · 试点</title>
+<style>
+  body { background:#0b0e14; color:#c9d4e3; font-family:ui-monospace,Menlo,Consolas,monospace; margin:24px; }
+  h1 { font-size:18px; color:#e6edf7; font-weight:600; }
+  pre { background:#121722; border:1px solid #1e2634; padding:14px; border-radius:8px; line-height:1.6; white-space:pre-wrap; }
+  .ok { color:#6ee7a8; } .bad { color:#ff8a8a; }
+</style>
+</head>
+<body>
+<h1>WebGPU 三维标量平流核 · 与 CPU 逐点比对</h1>
+<pre id="out">运行中…</pre>
+<script type="module">
+import { runAdvectionCompare } from '../src/three/gpu/advect3.js';
+const el = document.getElementById('out');
+const fmt = (r) =>
+  `适配器: ${r.adapter}\n` +
+  `网格: ${r.nx}×${r.ny}×${r.nz}（${r.cells} 格点）\n` +
+  `CPU 参考: ${r.cpuMs.toFixed(2)} ms\n` +
+  `GPU 核:   ${r.gpuMs.toFixed(2)} ms（${(r.cpuMs / r.gpuMs).toFixed(0)}×）\n` +
+  `max|GPU − CPU| = ${r.maxErr.toExponential(3)}\n` +
+  `相对误差（对场均值）= ${r.relErr.toExponential(3)}\n` +
+  `非有限值：${r.nonFinite}\n` +
+  `<span class="${r.ok ? 'ok' : 'bad'}">判定: ${r.ok ? '通过（逐点误差 < 1e-4）' : '失败'}</span>\n`;
+try {
+  const out = [];
+  for (const g of [{ nx: 32, ny: 32, nz: 24 }, { nx: 64, ny: 64, nz: 32 }]) {
+    const r = await runAdvectionCompare({ ...g, dx: 375, dy: 375, dz: 375 });
+    if (r.reason) { out.push(`不可用: ${r.reason}`); break; }
+    out.push(fmt(r));
+  }
+  el.innerHTML = out.join('\n────────────────────────────\n');
+} catch (e) {
+  el.textContent = 'ERROR: ' + (e && e.message ? e.message : String(e));
+}
+</script>
+</body>
+</html>
