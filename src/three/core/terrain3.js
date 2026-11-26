@@ -134,6 +134,9 @@ export function resetSolidState(S, base, grid, terrain) {
       S.qv[idx] = base.qv0[k];
       S.qc[idx] = 0;
       S.qr[idx] = 0;
+      S.qi[idx] = 0;
+      S.qs[idx] = 0;
+      S.qg[idx] = 0;
       S.u[idx] = 0; S.v[idx] = 0;
       S.w[idx] = 0; S.w[idx + nXY] = 0;
     }

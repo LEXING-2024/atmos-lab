@@ -30,6 +30,23 @@ export const SCALE_PRESETS3 = [
     viz: { wMax: 25, uMax: 25, thMax: 6, qcMax: 2.2e-3, qrMax: 2.5e-3 },
   },
   {
+    id: 'ice3d',
+    name: '3D 冰相云',
+    domain: '12 × 12 × 14 km',
+    Lx: 12000, Ly: 12000, H: 14000,
+    levels: [
+      { nx: 32, ny: 32, nz: 32, label: '32²×32' },
+      { nx: 64, ny: 64, nz: 48, label: '64²×48' },
+    ],
+    simSpeed: 30,
+    note: '强上升气流穿过 0°C 层：云冰→雪→霰的转化、砧状冰化、地面雨夹雪',
+    micro: true,
+    rh: 0.8,
+    bubble: { amplitude: 4, radius: 2500, zCenter: 1500 },
+    surface: { sensible: 0, latent: 0, xWidthKm: 2, yWidthKm: 2 },
+    viz: { wMax: 28, uMax: 25, thMax: 6, qcMax: 1.5e-3, qrMax: 2e-3, iceMax: 1.5e-4 },
+  },
+  {
     id: 'meso3d',
     name: '3D 中尺度',
     domain: '120 × 120 × 16 km',
@@ -97,7 +114,7 @@ export const SCALE_PRESETS3 = [
     wind: { u0: 3, shearU: 0 },
     bubble: { amplitude: 0.8, radius: 500, zCenter: 900 },
     surface: { sensible: 150, latent: 0, xWidthKm: 3, yWidthKm: 3 },
-    viz: { wMax: 12, uMax: 12, thMax: 3, qcMax: 1e-3, qrMax: 1e-3 },
+    viz: { wMax: 5, uMax: 8, thMax: 2.5, qcMax: 8e-4, qrMax: 8e-4, iceMax: 1e-4 },
   },
 ];
 

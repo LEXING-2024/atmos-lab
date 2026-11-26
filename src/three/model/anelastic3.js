@@ -7,7 +7,7 @@
  */
 
 import { makeBase } from '../../model/base.js';
-import { allocState3, copyState3, combineState3, clampMoisture3, repairMoisture3, maxAbs3 } from './state3.js';
+import { allocState3, copyState3, combineState3, clampMoisture3, repairMoisture3, maxAbs3, FIELD_NAMES3 } from './state3.js';
 import { createPoissonSolver3 } from '../core/poisson3.js';
 import { createPoissonSolver3IBM } from '../core/poisson3_ibm.js';
 import { makeTerrain, maskVelocities, resetSolidState } from '../core/terrain3.js';
@@ -24,7 +24,11 @@ export const DEFAULT_CONFIG3 = {
   dtMax: 6,
   cfl: 0.4,
   filter: 0.02,
-  micro: { enable: true, k1: 1e-3, qc0: 0.6e-3, k2: 2.2, evapTau: 1200 },
+  micro: {
+    enable: true, k1: 1e-3, qc0: 0.6e-3, k2: 2.2, evapTau: 1200,
+    ice: true, freezeRate: 0.012, autoIce: 2e-3, qi0: 1e-4, rimK: 1.2e3, meltTau: 90,
+    vtSnow: 1.4, vtGraupel: 3.0,
+  },
   turb: {
     cs: 0.15, kMin: 1.0, kMax: 1500, cd: 0.002,
     surface: { sensible: 0, latent: 0, xCenter: null, yCenter: null, xWidth: 4000, yWidth: 4000 },
@@ -77,6 +81,9 @@ export class AnelasticModel3 {
       tqv: new Float64Array(nCell),
       tqc: new Float64Array(nCell),
       tqr: new Float64Array(nCell),
+      tqi: new Float64Array(nCell),
+      tqs: new Float64Array(nCell),
+      tqg: new Float64Array(nCell),
     };
     this.pi = new Float64Array(nCell);
     this.Fx = new Float64Array(grid.nx);
@@ -115,6 +122,9 @@ export class AnelasticModel3 {
         S.qv[off + n] = base.qv0[k];
         S.qc[off + n] = 0;
         S.qr[off + n] = 0;
+        S.qi[off + n] = 0;
+        S.qs[off + n] = 0;
+        S.qg[off + n] = 0;
       }
     }
     S.u.fill(0);
@@ -181,10 +191,26 @@ export class AnelasticModel3 {
       for (let n = 0; n < g.nXY; n++) {
         const m = off + n;
         if (m0 && m0[m]) continue;
-        sum += rk * (S.qv[m] + S.qc[m] + S.qr[m]);
+        sum += rk * (S.qv[m] + S.qc[m] + S.qr[m] + S.qi[m] + S.qs[m] + S.qg[m]);
       }
     }
     return sum * g.dx * g.dy * g.dz;
+  }
+
+  /** 冰相总量（云冰+雪+霰），kg/m² 的域平均 */
+  iceWater() {
+    const g = this.grid, base = this.base, S = this.S;
+    const m0 = this.terrain ? this.terrain.mask : null;
+    let sum = 0;
+    for (let k = 0; k < g.nz; k++) {
+      const off = g.nXY * k, rk = base.rho0[k];
+      for (let n = 0; n < g.nXY; n++) {
+        const m = off + n;
+        if (m0 && m0[m]) continue;
+        sum += rk * (S.qi[m] + S.qs[m] + S.qg[m]) * g.dz;
+      }
+    }
+    return sum / g.nXY;   // kg/m²（≈ 等价水柱 mm）
   }
 
   diagnostics() {
@@ -200,7 +226,7 @@ export class AnelasticModel3 {
         if (w > maxW) maxW = w;
         const spd = Math.sqrt(S.u[m] * S.u[m] + S.v[m] * S.v[m]);
         if (spd > maxU) maxU = spd;
-        if (S.qc[m] + S.qr[m] > 1e-5 && g.zc(k) > cloudTop) cloudTop = g.zc(k);
+        if (S.qc[m] + S.qr[m] + S.qi[m] + S.qs[m] + S.qg[m] > 1e-5 && g.zc(k) > cloudTop) cloudTop = g.zc(k);
       }
     }
     const cfl = Math.max(
@@ -232,16 +258,17 @@ export class AnelasticModel3 {
 
     T.tu.fill(0); T.tv.fill(0); T.tw.fill(0);
     T.tth.fill(0); T.tqv.fill(0); T.tqc.fill(0); T.tqr.fill(0);
+    T.tqi.fill(0); T.tqs.fill(0); T.tqg.fill(0);
 
     const theta0 = base.theta0, qv0 = base.qv0;
     const rho0 = base.rho0, rhoW = base.rhoW;
     const gg = CONST.g;
 
-    const scalars = [S.th, S.qv, S.qc, S.qr];
-    const tscalars = [T.tth, T.tqv, T.tqc, T.tqr];
+    const scalars = [S.th, S.qv, S.qc, S.qr, S.qi, S.qs, S.qg];
+    const tscalars = [T.tth, T.tqv, T.tqc, T.tqr, T.tqi, T.tqs, T.tqg];
     const Fx = this.Fx, Fy = this.Fy;
 
-    for (let s = 0; s < 4; s++) {
+    for (let s = 0; s < 7; s++) {
       const f = scalars[s], tf = tscalars[s];
 
       // ---- x ----
@@ -401,10 +428,13 @@ export class AnelasticModel3 {
           const qvA = 0.5 * (S.qv[n] + S.qv[n - nXY]);
           const qcA = 0.5 * (S.qc[n] + S.qc[n - nXY]);
           const qrA = 0.5 * (S.qr[n] + S.qr[n - nXY]);
+          const qiA = 0.5 * (S.qi[n] + S.qi[n - nXY]);
+          const qsA = 0.5 * (S.qs[n] + S.qs[n - nXY]);
+          const qgA = 0.5 * (S.qg[n] + S.qg[n - nXY]);
           const th0A = 0.5 * (theta0[k] + theta0[k - 1]);
           const qv0A = 0.5 * (qv0[k] + qv0[k - 1]);
 
-          const b = gg * (thA / th0A - 1 + 0.61 * (qvA - qv0A) - qcA - qrA);
+          const b = gg * (thA / th0A - 1 + 0.61 * (qvA - qv0A) - qcA - qrA - qiA - qsA - qgA);
           T.tw[n] = adv + b;
         }
       }
@@ -507,6 +537,9 @@ export class AnelasticModel3 {
       dst.qv[n] = src.qv[n] + dt * this.T.tqv[n];
       dst.qc[n] = src.qc[n] + dt * this.T.tqc[n];
       dst.qr[n] = src.qr[n] + dt * this.T.tqr[n];
+      dst.qi[n] = src.qi[n] + dt * this.T.tqi[n];
+      dst.qs[n] = src.qs[n] + dt * this.T.tqs[n];
+      dst.qg[n] = src.qg[n] + dt * this.T.tqg[n];
     }
     for (let n = 0; n < g.nW; n++) dst.w[n] = src.w[n] + dt * this.T.tw[n];
 
@@ -613,7 +646,7 @@ export class AnelasticModel3 {
 
     return {
       u: lerp(S.u), v: lerp(S.v), w: lerp(S.w), th: lerp(S.th),
-      qv: lerp(S.qv), qc: lerp(S.qc), qr: lerp(S.qr),
+      qv: lerp(S.qv), qc: lerp(S.qc), qr: lerp(S.qr), qi: lerp(S.qi), qs: lerp(S.qs), qg: lerp(S.qg),
       T: lerp(S.th) * this.base.ex[k0],
     };
   }
@@ -650,14 +683,14 @@ export class AnelasticModel3 {
 
   snapshot() {
     const out = {};
-    for (const f of ['u', 'v', 'w', 'th', 'qv', 'qc', 'qr']) out[f] = this.S[f].slice();
+    for (const f of FIELD_NAMES3) out[f] = this.S[f].slice();
     out.time = this.time;
     out.precipAccum = this.precipAccum;
     return out;
   }
 
   restore(s) {
-    for (const f of ['u', 'v', 'w', 'th', 'qv', 'qc', 'qr']) this.S[f].set(s[f]);
+    for (const f of FIELD_NAMES3) this.S[f].set(s[f]);
     this.time = s.time ?? 0;
     this.precipAccum = s.precipAccum ?? 0;
   }

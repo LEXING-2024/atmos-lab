@@ -9,6 +9,7 @@ import { qsat } from '../../physics/thermo.js';
 
 export const FIELD_LIST3 = [
   { id: 'cloud', name: '云与水' },
+  { id: 'ice', name: '冰相' },
   { id: 'w', name: '垂直速度' },
   { id: 'speed', name: '水平风速' },
   { id: 'temp', name: '位温扰动' },
@@ -16,7 +17,7 @@ export const FIELD_LIST3 = [
   { id: 'rh', name: '相对湿度' },
 ];
 
-export const DEFAULT_VIZ3 = { wMax: 25, uMax: 25, thMax: 6, qcMax: 2.2e-3, qrMax: 2.5e-3 };
+export const DEFAULT_VIZ3 = { wMax: 25, uMax: 25, thMax: 6, qcMax: 2.2e-3, qrMax: 2.5e-3, iceMax: 1.5e-4 };
 
 const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
 
@@ -100,10 +101,21 @@ export function colorizeSlice(model, field = 'cloud', plane = 'xz', index = 0, v
         const skyR = 160 - 120 * zf, skyG = 200 - 110 * zf, skyB = 240 - 80 * zf;
         // 云（凝结物）用白，雨滴单独用偏灰蓝的半透明纱，避免雨把整根柱子刷白
         const aCloud = Math.pow(clamp01(S.qc[n] / v.qcMax), 0.65);
+        const aIce = Math.pow(clamp01((S.qi[n] + S.qs[n] + S.qg[n]) / v.iceMax), 0.65);
         const aRain = Math.pow(clamp01(S.qr[n] / v.qrMax), 0.8) * 0.55;
         let r = skyR + (245 - skyR) * aCloud;
         let gg = skyG + (250 - skyG) * aCloud;
         let b = skyB + (255 - skyB) * aCloud;
+        if (aIce > 0) {
+          // 冰相偏冷白：云冰最白，雪次之，霰带一点灰
+          const graupelShare = clamp01(S.qg[n] / Math.max(1e-12, S.qi[n] + S.qs[n] + S.qg[n]));
+          const ir = 235 - 25 * graupelShare;
+          const ig = 245 - 20 * graupelShare;
+          const ib = 255 - 15 * graupelShare;
+          r = r * (1 - aIce) + ir * aIce;
+          gg = gg * (1 - aIce) + ig * aIce;
+          b = b * (1 - aIce) + ib * aIce;
+        }
         if (aRain > 0) {
           r = r * (1 - aRain) + 132 * aRain;
           gg = gg * (1 - aRain) + 146 * aRain;
@@ -112,6 +124,19 @@ export function colorizeSlice(model, field = 'cloud', plane = 'xz', index = 0, v
         data[o] = r;
         data[o + 1] = gg;
         data[o + 2] = b;
+      } else if (field === 'ice') {
+        // 冰相单独成场：云冰白、雪亮青、霰灰紫，三种冰同一量纲叠色
+        const qi = S.qi[n], qsv = S.qs[n], qg = S.qg[n];
+        const tot = qi + qsv + qg;
+        const a = Math.pow(clamp01(tot / v.iceMax), 0.6);
+        const gf = tot > 1e-12 ? qg / tot : 0;
+        const sf = tot > 1e-12 ? qsv / tot : 0;
+        const r0 = 225 + 15 * gf;
+        const g0 = 238 - 25 * gf + 5 * sf;
+        const b0 = 255 - 40 * gf;
+        data[o] = 12 + (r0 - 12) * a;
+        data[o + 1] = 22 + (g0 - 22) * a;
+        data[o + 2] = 45 + (b0 - 45) * a;
       } else if (field === 'rain') {
         const a = clamp01(S.qr[n] / v.qrMax);
         data[o] = 20 + 10 * a;
