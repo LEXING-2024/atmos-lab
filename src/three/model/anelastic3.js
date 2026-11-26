@@ -28,6 +28,10 @@ export const DEFAULT_CONFIG3 = {
     surface: { sensible: 0, latent: 0, xCenter: null, yCenter: null, xWidth: 4000, yWidth: 4000 },
   },
   rad: { tauRad: 8 * 3600, spongeMax: 1 / 300, spongeDepth: 0.7 },
+  // 环境风初值：u0/v0 为地面风，shearU/shearV 为线性风切变（1/s）
+  // 缺省 0 = 静止大气（与二维一致）；给上非零切变是打破 x–y 对称最直接的办法
+  // shearDepth：切变只加到这一层高度，之上保持常数，避免 9 km 域顶部出现 30 m/s 的假急流
+  wind: { u0: 0, v0: 0, shearU: 0, shearV: 0, zRef: 0, shearDepth: 6000 },
 };
 
 export class AnelasticModel3 {
@@ -44,6 +48,7 @@ export class AnelasticModel3 {
         surface: { ...DEFAULT_CONFIG3.turb.surface, ...((opts.turb || {}).surface || {}) },
       },
       rad: { ...DEFAULT_CONFIG3.rad, ...(opts.rad || {}) },
+      wind: { ...DEFAULT_CONFIG3.wind, ...(opts.wind || {}) },
     };
 
     this.base = makeBase(grid, opts.base || {});
@@ -110,6 +115,21 @@ export class AnelasticModel3 {
     S.v.fill(0);
     S.w.fill(0);
     this.pi.fill(0);
+
+    // 环境风：u(z) = u0 + shearU·min(z, shearDepth)。只作为初值，之后由方程自己演化。
+    const wind = { ...this.cfg.wind, ...(o.wind || {}) };
+    if (wind.u0 || wind.v0 || wind.shearU || wind.shearV) {
+      for (let k = 0; k < g.nz; k++) {
+        const z = g.zc(k), off = g.nXY * k;
+        const zs = Math.min(z - wind.zRef, wind.shearDepth);
+        const uu = wind.u0 + wind.shearU * zs;
+        const vv = wind.v0 + wind.shearV * zs;
+        for (let n = 0; n < g.nXY; n++) {
+          S.u[off + n] = uu;
+          S.v[off + n] = vv;
+        }
+      }
+    }
 
     for (let k = 0; k < g.nz; k++) {
       const z = g.zc(k), off = g.nXY * k;

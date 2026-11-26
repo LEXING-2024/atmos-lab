@@ -138,6 +138,8 @@
     </section>
 
     <section>
+      <label class="chk"><input type="checkbox" id="follow3" checked> 切面跟随云体</label>
+
       <label class="t">主视图切面（y）<span class="val" id="sliceYOut"></span></label>
       <input type="range" id="sliceY" min="0" max="31" step="1" value="16">
 
@@ -163,6 +165,13 @@
 
       <label class="t">触发热泡半径 <span class="val" id="radiusOut"></span></label>
       <input type="range" id="radius" min="100" max="20000" step="50" value="2000">
+
+      <label class="t">环境风（地面）<span class="val" id="windOut"></span></label>
+      <input type="range" id="wind" min="0" max="20" step="1" value="0">
+
+      <label class="t">风切变 <span class="val" id="shearOut"></span></label>
+      <input type="range" id="shear" min="0" max="10" step="1" value="0">
+      <div class="hint">单泡初值在 x、y 上是对称的，两个切面自然会像。给一点环境风或风切变，上升气流就会顺风倾斜、砧状云偏向下风方。注意本档域只有 12 km，风超过 3 m/s 时砧会绕周期边界回来；要看完整风切变对流请用「3D 中尺度」。</div>
     </section>
 
     <section class="row">

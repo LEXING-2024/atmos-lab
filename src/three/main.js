@@ -23,6 +23,9 @@ const state = {
   latent: 0,
   amp: 3,
   radius: 2000,
+  wind: 0,
+  shear: 0,
+  follow: true,
   j: 0,
   i: 0,
   k: 0,
@@ -61,7 +64,10 @@ function makeModel() {
   };
   const m = buildModel3(grid, p, overrides);
   const b = p.bubble ?? { amplitude: 3, radius: 2000, zCenter: 1200 };
-  m.initAtmosphere({ amplitude: state.amp, radius: state.radius, zCenter: b.zCenter, noise: 0.02 });
+  m.initAtmosphere({
+    amplitude: state.amp, radius: state.radius, zCenter: b.zCenter, noise: 0.02,
+    wind: { u0: state.wind, shearU: state.shear / 1000 },
+  });
   return m;
 }
 
@@ -152,11 +158,16 @@ function syncSliders() {
   $('latent').value = String(state.latent);
   $('amp').value = String(state.amp);
   $('radius').value = String(state.radius);
+  $('wind').value = String(state.wind);
+  $('shear').value = String(state.shear);
   $('rhOut').textContent = state.rh.toFixed(2);
   $('sensibleOut').textContent = `${state.sensible} W/m²`;
   $('latentOut').textContent = `${state.latent} W/m²`;
   $('ampOut').textContent = `${state.amp.toFixed(1)} K`;
   $('radiusOut').textContent = `${(state.radius / 1000).toFixed(1)} km`;
+  $('windOut').textContent = `${state.wind} m/s`;
+  $('shearOut').textContent = `${state.shear} m/s·km⁻¹`;
+  $('follow3').checked = state.follow;
 }
 
 function syncSliceRanges() {
@@ -173,6 +184,47 @@ function updateSliceLabels() {
   $('sliceYOut').textContent = `${(g.yc(state.j) / 1000).toFixed(1)} km`;
   $('sliceXOut').textContent = `${(g.xc(state.i) / 1000).toFixed(1)} km`;
   $('sliceZOut').textContent = `${(g.zc(state.k) / 1000).toFixed(1)} km`;
+}
+
+/**
+ * 三个切面跟随云体：取凝结物柱积分最大的 y / x，以及 qc 最多的层。
+ * 环境风把云吹走之后，固定切面会切到空白处，看起来"什么都没长"。
+ */
+let followTick = 0;
+function trackCloud(force = false) {
+  if (!state.follow || !model) return;
+  followTick++;
+  if (!force && followTick % 8) return;
+  const g = model.grid, S = model.S;
+  const rowY = new Float64Array(g.ny);
+  const rowX = new Float64Array(g.nx);
+  let bestK = 0, bestLayer = -1, total = 0;
+  for (let k = 0; k < g.nz; k++) {
+    let layer = 0;
+    for (let j = 0; j < g.ny; j++) {
+      const off = g.nx * (j + g.ny * k);
+      let s = 0;
+      for (let i = 0; i < g.nx; i++) s += S.qc[off + i];
+      rowY[j] += s;
+      layer += s;
+    }
+    for (let i = 0; i < g.nx; i++) {
+      let s = 0;
+      for (let j = 0; j < g.ny; j++) s += S.qc[i + g.nx * (j + g.ny * k)];
+      rowX[i] += s;
+    }
+    total += layer;
+    if (layer > bestLayer) { bestLayer = layer; bestK = k; }
+  }
+  if (total < 1e-4) return;                    // 没有云就不动切面
+  let bj = 0, bi = 0;
+  for (let j = 1; j < g.ny; j++) if (rowY[j] > rowY[bj]) bj = j;
+  for (let i = 1; i < g.nx; i++) if (rowX[i] > rowX[bi]) bi = i;
+  state.j = bj; state.i = bi; state.k = bestK;
+  $('sliceY').value = String(bj);
+  $('sliceX').value = String(bi);
+  $('sliceZ').value = String(bestK);
+  updateSliceLabels();
 }
 
 /* ----------------------------- 主循环 ----------------------------- */
@@ -195,6 +247,7 @@ function stepSim() {
 
 function drawAll() {
   if (!model) return;
+  trackCloud();
   const p = preset();
   const viz = p.viz;
   views.xz.draw(model, { field: state.field, plane: 'xz', index: state.j, viz });
@@ -259,6 +312,8 @@ function applyUrlState() {
   if (urlq.has('latent')) state.latent = Number(urlq.get('latent'));
   if (urlq.has('amp')) state.amp = Number(urlq.get('amp'));
   if (urlq.has('radius')) state.radius = Number(urlq.get('radius'));
+  if (urlq.has('wind')) state.wind = Number(urlq.get('wind'));
+  if (urlq.has('shear')) state.shear = Number(urlq.get('shear'));
   if (urlq.has('micro')) state.micro = urlq.get('micro') !== '0';
 }
 
@@ -283,10 +338,13 @@ function boot() {
   $('latent').addEventListener('input', () => { state.latent = Number($('latent').value); $('latentOut').textContent = `${state.latent} W/m²`; resetModel(); });
   $('amp').addEventListener('input', () => { state.amp = Number($('amp').value); $('ampOut').textContent = `${state.amp.toFixed(1)} K`; });
   $('radius').addEventListener('input', () => { state.radius = Number($('radius').value); $('radiusOut').textContent = `${(state.radius / 1000).toFixed(1)} km`; });
+  $('wind').addEventListener('input', () => { state.wind = Number($('wind').value); $('windOut').textContent = `${state.wind} m/s`; resetModel(); });
+  $('shear').addEventListener('input', () => { state.shear = Number($('shear').value); $('shearOut').textContent = `${state.shear} m/s·km⁻¹`; resetModel(); });
 
-  $('sliceY').addEventListener('input', () => { state.j = Number($('sliceY').value); updateSliceLabels(); });
-  $('sliceX').addEventListener('input', () => { state.i = Number($('sliceX').value); updateSliceLabels(); });
-  $('sliceZ').addEventListener('input', () => { state.k = Number($('sliceZ').value); updateSliceLabels(); });
+  $('sliceY').addEventListener('input', () => { state.follow = false; $('follow3').checked = false; state.j = Number($('sliceY').value); updateSliceLabels(); });
+  $('sliceX').addEventListener('input', () => { state.follow = false; $('follow3').checked = false; state.i = Number($('sliceX').value); updateSliceLabels(); });
+  $('sliceZ').addEventListener('input', () => { state.follow = false; $('follow3').checked = false; state.k = Number($('sliceZ').value); updateSliceLabels(); });
+  $('follow3').addEventListener('change', () => { state.follow = $('follow3').checked; });
 
   $('micro3').addEventListener('change', () => { state.micro = $('micro3').checked; resetModel(); });
   $('pause3').addEventListener('click', () => { state.paused = !state.paused; $('pause3').textContent = state.paused ? '继续' : '暂停'; });
@@ -318,6 +376,7 @@ function boot() {
       if (r.steps > 0) lastStepMs = r.ms / r.steps;
     }
   }
+  trackCloud(true);
   $('micro3').checked = state.micro;
   lastWall = performance.now();
   requestAnimationFrame(frame);
