@@ -12,7 +12,7 @@ export function createMicrophysics(grid, cfg) {
   const k1 = cfg.k1 ?? 1e-3;
   const qc0 = cfg.qc0 ?? 0.6e-3;
   const k2 = cfg.k2 ?? 2.2;
-  const evapTau = cfg.evapTau ?? 3.0;
+  const evapTau = cfg.evapTau ?? 1200;   // 雨蒸发时标：3 s 会让雨在几百米内蒸干，与 Kessler 量级不符
   const rhoCritNeg = 1e-12;
 
   function apply(S, base, dt) {
