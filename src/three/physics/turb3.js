@@ -5,10 +5,11 @@
 
 import { CONST } from '../../physics/thermo.js';
 
-export function createTurbulence3(grid, cfg) {
+export function createTurbulence3(grid, cfg, terrain = null) {
   const { nx, ny, nz, dx, dy, dz } = grid;
   const nXY = nx * ny;
   const nCell = grid.nCell;
+  const mask = terrain ? terrain.mask : null;
 
   const K = new Float64Array(nCell);
   const Kx = new Float64Array(nCell);
@@ -66,7 +67,7 @@ export function createTurbulence3(grid, cfg) {
           if (N2 > 1e-8 && S2 > 1e-12) kv = kv / (1 + 10 * N2 / S2);
           if (kv < kMin) kv = kMin;
           if (kv > kMax) kv = kMax;
-          K[n] = kv;
+          K[n] = mask && mask[n] ? 0 : kv;
           void im;
         }
       }
@@ -86,6 +87,10 @@ export function createTurbulence3(grid, cfg) {
           Kx[n] = 0.5 * (K[n] + K[row + ip]);
           Ky[n] = 0.5 * (K[n] + K[rowJp + i]);
           Kz[n] = up ? 0.5 * (K[n] + K[n + up]) : K[n];
+          // 固壁面不允许湍流扩散穿过
+          if (mask && (mask[n] || mask[row + ip])) Kx[n] = 0;
+          if (mask && (mask[n] || mask[rowJp + i])) Ky[n] = 0;
+          if (mask && (mask[n] || mask[n + up])) Kz[n] = 0;
         }
       }
     }
@@ -190,18 +195,31 @@ export function createTurbulence3(grid, cfg) {
       }
     }
 
-    // 地表：拖曳（u、v）+ 感热 + 潜热
-    const rhoS = base.rho0[0];
-    const tth = Hf / (rhoS * CONST.cp * dz);
-    const tqv = LE / (rhoS * CONST.Lv * dz);
+    // 地表：拖曳（u、v）+ 感热 + 潜热。有地形时作用在每列最低的流体层。
+    const surfN = new Int32Array(nXY);
+    const surfK = new Int32Array(nXY);
+    for (let j = 0; j < ny; j++) {
+      for (let i = 0; i < nx; i++) {
+        const col = i + nx * j;
+        const kS = terrain ? terrain.surfaceK[col] : 0;
+        surfK[col] = kS;
+        surfN[col] = col + nXY * kS;
+      }
+    }
 
-    for (let n = 0; n < nXY; n++) {
+    for (let col = 0; col < nXY; col++) {
+      const n = surfN[col];
+      if (mask && mask[n]) continue;
+      const kS = surfK[col];
+      const rhoS = base.rho0[kS];
+      const tth = Hf / (rhoS * CONST.cp * dz);
+      const tqv = LE / (rhoS * CONST.Lv * dz);
       const uS = S.u[n], vS = S.v[n];
       const spd = Math.sqrt(uS * uS + vS * vS);
       T.tu[n] -= cd * spd * uS / dz;
       T.tv[n] -= cd * spd * vS / dz;
 
-      const fac = facCol[n];
+      const fac = facCol[col];
       if (fac > 1e-3) {
         T.tth[n] += tth * fac;
         T.tqv[n] += tqv * fac;

@@ -61,6 +61,44 @@ export const SCALE_PRESETS3 = [
     surface: { sensible: 120, latent: 0, xWidthKm: 0.2, yWidthKm: 0.2 },
     viz: { wMax: 4, uMax: 6, thMax: 2, qcMax: 8e-4, qrMax: 8e-4 },
   },
+  {
+    id: 'ridge3d',
+    name: '3D 山脊',
+    domain: '12 × 12 × 9 km',
+    Lx: 12000, Ly: 12000, H: 9000,
+    levels: [
+      { nx: 32, ny: 32, nz: 24, label: '32²×24' },
+      { nx: 64, ny: 64, nz: 32, label: '64²×32' },
+    ],
+    simSpeed: 60,
+    note: '越过 1.5 km 山脊的迎风波、背风波与地形云（固壁 + 环境风）',
+    micro: true,
+    rh: 0.86,
+    terrain: { kind: 'ridge', height: 1500, halfWidth: 2500 },
+    wind: { u0: 8, shearU: 0 },
+    bubble: { amplitude: 0, radius: 1500, zCenter: 3000 },
+    surface: { sensible: 0, latent: 0 },
+    viz: { wMax: 8, uMax: 25, thMax: 4, qcMax: 1.2e-3, qrMax: 1.2e-3 },
+  },
+  {
+    id: 'city3d',
+    name: '3D 街区',
+    domain: '6 × 6 × 3 km',
+    Lx: 6000, Ly: 6000, H: 3000,
+    levels: [
+      { nx: 32, ny: 32, nz: 24, label: '32²×24' },
+      { nx: 64, ny: 64, nz: 32, label: '64²×32' },
+    ],
+    simSpeed: 40,
+    note: '规则街区的绕流与街谷环流（600 m 高、800 m 见方，无冠层参数化）',
+    micro: true,
+    rh: 0.7,
+    terrain: { kind: 'city', blocks: { nx: 5, ny: 5, size: 800, height: 600 } },
+    wind: { u0: 3, shearU: 0 },
+    bubble: { amplitude: 0.8, radius: 500, zCenter: 900 },
+    surface: { sensible: 150, latent: 0, xWidthKm: 3, yWidthKm: 3 },
+    viz: { wMax: 12, uMax: 12, thMax: 3, qcMax: 1e-3, qrMax: 1e-3 },
+  },
 ];
 
 export function presetById3(id) {
@@ -79,6 +117,7 @@ export function buildModel3(grid, preset, overrides = {}) {
     micro: { enable: preset.micro !== false, ...(overrides.micro || {}) },
     turb: { surface: { sensible: 0, latent: 0 }, ...(overrides.turb || {}) },
     rad: { ...(overrides.rad || {}) },
+    terrain: overrides.terrain !== undefined ? overrides.terrain : (preset.terrain ?? null),
     ...(overrides.top || {}),
   };
   return new AnelasticModel3(grid, { ...cfg, base });

@@ -9,6 +9,8 @@
 import { makeBase } from '../../model/base.js';
 import { allocState3, copyState3, combineState3, clampMoisture3, repairMoisture3, maxAbs3 } from './state3.js';
 import { createPoissonSolver3 } from '../core/poisson3.js';
+import { createPoissonSolver3IBM } from '../core/poisson3_ibm.js';
+import { makeTerrain, maskVelocities, resetSolidState } from '../core/terrain3.js';
 import { createMicrophysics3 } from '../physics/micro3.js';
 import { createTurbulence3 } from '../physics/turb3.js';
 import { createRadiation3 } from '../physics/rad3.js';
@@ -52,10 +54,14 @@ export class AnelasticModel3 {
     };
 
     this.base = makeBase(grid, opts.base || {});
-    this.solver = createPoissonSolver3(grid);
+    this.terrain = opts.terrain ? makeTerrain(grid, opts.terrain) : null;
+    this.solver = this.terrain
+      ? createPoissonSolver3IBM(grid, this.terrain.mask)
+      : createPoissonSolver3(grid);
     this.micro = createMicrophysics3(grid, this.cfg.micro);
-    this.turb = createTurbulence3(grid, this.cfg.turb);
+    this.turb = createTurbulence3(grid, this.cfg.turb, this.terrain);
     this.rad = createRadiation3(grid, this.cfg.rad);
+    this.ibmIterations = 0;
 
     const nCell = grid.nCell, nW = grid.nW;
     this.S = allocState3(grid);
@@ -157,6 +163,10 @@ export class AnelasticModel3 {
     this.precipAccum = 0;
     this.precipRate = 0;
     this.waterInput = 0;
+    if (this.terrain) {
+      resetSolidState(this.S, this.base, g, this.terrain);
+      maskVelocities(this.S, g, this.terrain);
+    }
     this.initMass = this.totalWater();
   }
 
@@ -164,11 +174,13 @@ export class AnelasticModel3 {
 
   totalWater() {
     const g = this.grid, base = this.base, S = this.S;
+    const m0 = this.terrain ? this.terrain.mask : null;
     let sum = 0;
     for (let k = 0; k < g.nz; k++) {
       const off = g.nXY * k, rk = base.rho0[k];
       for (let n = 0; n < g.nXY; n++) {
         const m = off + n;
+        if (m0 && m0[m]) continue;
         sum += rk * (S.qv[m] + S.qc[m] + S.qr[m]);
       }
     }
@@ -177,11 +189,13 @@ export class AnelasticModel3 {
 
   diagnostics() {
     const g = this.grid, S = this.S, nXY = g.nXY;
+    const m0 = this.terrain ? this.terrain.mask : null;
     let maxW = 0, maxU = 0, cloudTop = 0;
     for (let k = 0; k < g.nz; k++) {
       const off = nXY * k;
       for (let n = 0; n < nXY; n++) {
         const m = off + n;
+        if (m0 && m0[m]) continue;
         const w = Math.abs(S.w[m] + S.w[m + nXY]) * 0.5;
         if (w > maxW) maxW = w;
         const spd = Math.sqrt(S.u[m] * S.u[m] + S.v[m] * S.v[m]);
@@ -471,7 +485,13 @@ export class AnelasticModel3 {
       this.S.w[n] = 0;
       this.S.w[n + g.nXY * g.nz] = 0;
     }
-    this.solver.project(this.S.u, this.S.v, this.S.w, this.lastDt > 0 ? this.lastDt : 1, this.pi, this.base);
+    if (this.terrain) {
+      resetSolidState(this.S, this.base, g, this.terrain);
+      maskVelocities(this.S, g, this.terrain);
+    }
+    const res = this.solver.project(this.S.u, this.S.v, this.S.w, this.lastDt > 0 ? this.lastDt : 1, this.pi, this.base);
+    this.ibmIterations = res.iterations ?? this.ibmIterations;
+    if (this.terrain) maskVelocities(this.S, g, this.terrain);
   }
 
   /* --------------------------- 时间推进 --------------------------- */
@@ -490,7 +510,13 @@ export class AnelasticModel3 {
     }
     for (let n = 0; n < g.nW; n++) dst.w[n] = src.w[n] + dt * this.T.tw[n];
 
+    if (this.terrain) {
+      resetSolidState(dst, this.base, g, this.terrain);
+      maskVelocities(dst, g, this.terrain);
+    }
     const res = this.solver.project(dst.u, dst.v, dst.w, dt, this.pi, this.base);
+    this.ibmIterations = res.iterations ?? this.ibmIterations;
+    if (this.terrain) maskVelocities(dst, g, this.terrain);
     this.divResidual = res.divAfter;
   }
 
@@ -515,6 +541,10 @@ export class AnelasticModel3 {
     }
     this.waterInput += this.turb.waterRate * dt;
     clampMoisture3(S0);
+    if (this.terrain) {
+      resetSolidState(S0, this.base, this.grid, this.terrain);
+      maskVelocities(S0, this.grid, this.terrain);
+    }
 
     this.time += dt;
     this.lastDt = dt;
@@ -591,6 +621,15 @@ export class AnelasticModel3 {
   addBubble({ x, y, z, amplitude = 2.5, radius = 2000 }) {
     const g = this.grid, S = this.S;
     const yc = y ?? g.Ly * 0.5;
+    // 有地形时，把落在地下的热泡抬到该列最低的流体层之上
+    let zc = z;
+    if (this.terrain) {
+      const col = (Math.rint(x / g.dx) + g.nx) % g.nx
+        + g.nx * ((Math.rint(yc / g.dy) + g.ny) % g.ny);
+      const kS = this.terrain.surfaceK[col];
+      const zSurf = g.zc(kS);
+      if (zc - radius < zSurf) zc = zSurf + radius * 0.6;
+    }
     for (let k = 0; k < g.nz; k++) {
       const dzr = (g.zc(k) - z) / radius;
       if (dzr > 1 || dzr < -1) continue;

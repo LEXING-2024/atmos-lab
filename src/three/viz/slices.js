@@ -68,6 +68,7 @@ export function sliceExtent(model, plane) {
  */
 export function colorizeSlice(model, field = 'cloud', plane = 'xz', index = 0, viz = DEFAULT_VIZ3) {
   const g = model.grid, S = model.S, base = model.base;
+  const terrain = model.terrain || null;
   const { w, h } = sliceSize(model, plane);
   const data = new Uint8ClampedArray(w * h * 4);
   const px = [0, 0, 0];
@@ -84,6 +85,16 @@ export function colorizeSlice(model, field = 'cloud', plane = 'xz', index = 0, v
       const n = i + g.nx * (j + g.ny * k);
       const o = ((h - 1 - hh) * w + ww) * 4;
       const zf = plane === 'xy' ? k / (g.nz - 1) : hh / (h - 1);
+
+      if (terrain && terrain.mask[n]) {
+        // 固壁：按高度给一点深浅，让山体和街区能看出来
+        const shade = 0.55 + 0.45 * (plane === 'xy' ? 1 : zf);
+        data[o] = 78 * shade;
+        data[o + 1] = 66 * shade;
+        data[o + 2] = 56 * shade;
+        data[o + 3] = 255;
+        continue;
+      }
 
       if (field === 'cloud') {
         const skyR = 160 - 120 * zf, skyG = 200 - 110 * zf, skyB = 240 - 80 * zf;

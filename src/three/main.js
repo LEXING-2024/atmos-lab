@@ -55,6 +55,7 @@ function makeModel() {
   const overrides = {
     base: { TSfc: 299.5, RHsfc: state.rh },
     micro: { enable: state.micro },
+    terrain: p.terrain ?? null,
     turb: {
       surface: {
         sensible: state.sensible, latent: state.latent,
@@ -107,6 +108,9 @@ function buildButtons() {
       const bb = p.bubble ?? {};
       state.amp = bb.amplitude ?? 3;
       state.radius = bb.radius ?? 2000;
+      state.rh = p.rh ?? 0.78;
+      state.wind = p.wind?.u0 ?? 0;
+      state.shear = (p.wind?.shearU ?? 0) * 1000;
       state.sensible = p.surface?.sensible ?? 0;
       state.latent = p.surface?.latent ?? 0;
       syncSliders();
@@ -303,6 +307,13 @@ function onCanvasClick(ev) {
 }
 
 function applyUrlState() {
+  const p0 = presetById3(urlq.get('preset') ?? 'conv3d');
+  state.presetId = p0.id;
+  state.rh = p0.rh ?? 0.78;
+  state.wind = p0.wind?.u0 ?? 0;
+  state.shear = (p0.wind?.shearU ?? 0) * 1000;
+  state.sensible = p0.surface?.sensible ?? 0;
+  state.latent = p0.surface?.latent ?? 0;
   if (urlq.has('preset')) state.presetId = presetById3(urlq.get('preset')).id;
   if (urlq.has('level')) state.level = Number(urlq.get('level'));
   if (urlq.has('speed')) state.speed = Number(urlq.get('speed'));
