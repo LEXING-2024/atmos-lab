@@ -14,6 +14,7 @@ import { makeTerrain, maskVelocities, resetSolidState } from '../core/terrain3.j
 import { createMicrophysics3 } from '../physics/micro3.js';
 import { createTurbulence3 } from '../physics/turb3.js';
 import { createRadiation3 } from '../physics/rad3.js';
+import { createSurface3 } from '../physics/surface3.js';
 import { CONST } from '../../physics/thermo.js';
 
 const nowMs = () => (
@@ -33,7 +34,16 @@ export const DEFAULT_CONFIG3 = {
     cs: 0.15, kMin: 1.0, kMax: 1500, cd: 0.002,
     surface: { sensible: 0, latent: 0, xCenter: null, yCenter: null, xWidth: 4000, yWidth: 4000 },
   },
-  rad: { tauRad: 8 * 3600, spongeMax: 1 / 300, spongeDepth: 0.7 },
+  rad: {
+    tauRad: 8 * 3600, spongeMax: 1 / 300, spongeDepth: 0.7,
+    sun: { enable: false, lat: 30, decl: 8, hour0: 6, s0: 1361 },
+  },
+  // 地表能量平衡（v1.6）：默认关闭，关闭时沿用 turb.surface 的固定感热/潜热
+  surface: {
+    enable: false, kind: 'land', sst: 301, albedoLand: 0.18, albedoSea: 0.06,
+    cdLand: 0.0025, cdSea: 0.0011, betaLand: 0.65, betaSea: 1.0,
+    heatCapacityLand: 2.0e6, heatCapacitySea: 2.0e8, tauSea: 30 * 86400,
+  },
   // 环境风初值：u0/v0 为地面风，shearU/shearV 为线性风切变（1/s）
   // 缺省 0 = 静止大气（与二维一致）；给上非零切变是打破 x–y 对称最直接的办法
   // shearDepth：切变只加到这一层高度，之上保持常数，避免 9 km 域顶部出现 30 m/s 的假急流
@@ -53,8 +63,13 @@ export class AnelasticModel3 {
         ...(opts.turb || {}),
         surface: { ...DEFAULT_CONFIG3.turb.surface, ...((opts.turb || {}).surface || {}) },
       },
-      rad: { ...DEFAULT_CONFIG3.rad, ...(opts.rad || {}) },
+      rad: {
+        ...DEFAULT_CONFIG3.rad,
+        ...(opts.rad || {}),
+        sun: { ...DEFAULT_CONFIG3.rad.sun, ...((opts.rad || {}).sun || {}) },
+      },
       wind: { ...DEFAULT_CONFIG3.wind, ...(opts.wind || {}) },
+      surface: { ...DEFAULT_CONFIG3.surface, ...(opts.surface || {}) },
     };
 
     this.base = makeBase(grid, opts.base || {});
@@ -63,8 +78,12 @@ export class AnelasticModel3 {
       ? createPoissonSolver3IBM(grid, this.terrain.mask)
       : createPoissonSolver3(grid);
     this.micro = createMicrophysics3(grid, this.cfg.micro);
-    this.turb = createTurbulence3(grid, this.cfg.turb, this.terrain);
+    this.surface = this.cfg.surface.enable
+      ? createSurface3(grid, this.cfg.surface, this.terrain)
+      : null;
+    this.turb = createTurbulence3(grid, this.cfg.turb, this.terrain, this.surface);
     this.rad = createRadiation3(grid, this.cfg.rad);
+    if (this.surface) this.surface.init(this.base);
     this.ibmIterations = 0;
 
     const nCell = grid.nCell, nW = grid.nW;
@@ -246,6 +265,8 @@ export class AnelasticModel3 {
       totalWater: this.totalWater(),
       waterInput: this.waterInput,
       cells: g.nCell,
+      sunCos: this.rad.sunEnable ? this.rad.cosZenith(this.time) : 0,
+      surface: this.surface ? this.surface.stats() : null,
     };
   }
 
@@ -441,7 +462,7 @@ export class AnelasticModel3 {
     }
 
     this.turb.apply(S, base, T);
-    this.rad.apply(S, base, T);
+    this.rad.apply(S, base, T, this.time);
   }
 
   /* --------------------------- 数值滤波 --------------------------- */
@@ -572,6 +593,7 @@ export class AnelasticModel3 {
       this.precipRate = flux * 3600;
       this.precipAccum += flux * dt;
     }
+    if (this.surface) this.surface.advance(dt, S0, this.base, this.rad.swSurf);
     this.waterInput += this.turb.waterRate * dt;
     clampMoisture3(S0);
     if (this.terrain) {

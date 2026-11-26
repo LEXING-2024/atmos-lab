@@ -274,6 +274,7 @@ function hud() {
     ['降水', `${d.precipRate.toFixed(1)} mm/h`],
     ['累计降水', `${d.precipAccum.toFixed(1)} mm`],
     ['冰相', `${model.iceWater().toFixed(2)} mm`],
+    ['太阳 cosZ', d.sunCos ? d.sunCos.toFixed(2) : '—'],
     ['CFL', d.cfl.toFixed(2)],
     ['每步耗时', `${lastStepMs.toFixed(1)} ms`],
     ['本帧步数', `${stepsLastFrame}`],

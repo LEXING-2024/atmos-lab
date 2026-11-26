@@ -5,7 +5,7 @@
 
 import { CONST } from '../../physics/thermo.js';
 
-export function createTurbulence3(grid, cfg, terrain = null) {
+export function createTurbulence3(grid, cfg, terrain = null, surface = null) {
   const { nx, ny, nz, dx, dy, dz } = grid;
   const nXY = nx * ny;
   const nCell = grid.nCell;
@@ -156,8 +156,22 @@ export function createTurbulence3(grid, cfg, terrain = null) {
   let waterRate = 0;
   for (let n = 0; n < nXY; n++) waterRate += (LE / CONST.Lv) * facCol[n] * dx * dy;
 
+  /** 有地表模块时，由它提供每列的感热/潜热与拖曳系数 */
+  function surfaceFluxes(S, base) {
+    if (!surface) {
+      waterRate = 0;
+      for (let n = 0; n < nXY; n++) waterRate += (LE / CONST.Lv) * facCol[n] * dx * dy;
+      return;
+    }
+    surface.computeFluxes(S, base);
+    let w = 0;
+    for (let n = 0; n < nXY; n++) w += surface.lhFlux[n];
+    waterRate = (w * dx * dy) / CONST.Lv;
+  }
+
   function apply(S, base, T) {
     computeK(S, base);
+    surfaceFluxes(S, base);
 
     diffuse(S.u, T.tu, null);
     diffuse(S.v, T.tv, null);
@@ -165,6 +179,9 @@ export function createTurbulence3(grid, cfg, terrain = null) {
     diffuse(S.qv, T.tqv, base.qv0);
     diffuse(S.qc, T.tqc, null);
     diffuse(S.qr, T.tqr, null);
+    diffuse(S.qi, T.tqi, null);
+    diffuse(S.qs, T.tqs, null);
+    diffuse(S.qg, T.tqg, null);
 
     // w 只在中层；K 取上下两格的平均
     for (let k = 1; k < nz; k++) {
@@ -212,20 +229,29 @@ export function createTurbulence3(grid, cfg, terrain = null) {
       if (mask && mask[n]) continue;
       const kS = surfK[col];
       const rhoS = base.rho0[kS];
-      const tth = Hf / (rhoS * CONST.cp * dz);
-      const tqv = LE / (rhoS * CONST.Lv * dz);
       const uS = S.u[n], vS = S.v[n];
       const spd = Math.sqrt(uS * uS + vS * vS);
-      T.tu[n] -= cd * spd * uS / dz;
-      T.tv[n] -= cd * spd * vS / dz;
+      const cdHere = surface ? surface.cdCol[col] : cd;
+      T.tu[n] -= cdHere * spd * uS / dz;
+      T.tv[n] -= cdHere * spd * vS / dz;
 
-      const fac = facCol[col];
-      if (fac > 1e-3) {
-        T.tth[n] += tth * fac;
-        T.tqv[n] += tqv * fac;
+      if (surface) {
+        T.tth[n] += surface.shFlux[col] / (rhoS * CONST.cp * dz);
+        T.tqv[n] += surface.lhFlux[col] / (rhoS * CONST.Lv * dz);
+      } else {
+        const tth = Hf / (rhoS * CONST.cp * dz);
+        const tqv = LE / (rhoS * CONST.Lv * dz);
+        const fac = facCol[col];
+        if (fac > 1e-3) {
+          T.tth[n] += tth * fac;
+          T.tqv[n] += tqv * fac;
+        }
       }
     }
   }
 
-  return { apply, computeK, K, waterRate };
+  return {
+    apply, computeK, K,
+    get waterRate() { return waterRate; },
+  };
 }
