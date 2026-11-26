@@ -1,0 +1,12 @@
+# 本仓库只放程序本体；设计/使用文档留在本地
+设计实现文档.md
+启动.md
+
+# 运行产物
+test/out/
+node_modules/
+*.log
+
+# 系统垃圾
+.DS_Store
+Thumbs.db
